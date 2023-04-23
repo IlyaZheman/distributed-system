@@ -1,3 +1,9 @@
-﻿// See https://aka.ms/new-console-template for more information
+﻿namespace FrontEndServer;
 
-Console.WriteLine("Hello, World!");
+internal class Program
+{
+    private static void Main(string[] args)
+    {
+        
+    }
+}
