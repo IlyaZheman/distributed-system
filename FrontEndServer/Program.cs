@@ -1,5 +1,4 @@
-﻿using System.Collections;
-using System.Net;
+﻿using System.Net;
 using System.Net.Sockets;
 using System.Text;
 
@@ -7,93 +6,59 @@ namespace FrontEndServer;
 
 internal class Program
 {
-    private static void Main(string[] args)
+    private static async Task Main(string[] args)
     {
-        var server = new ServerObject();
-        server.Start();
-    }
-}
+        // Инициализируем IP-адрес и порт нашего сервера
+        var ipAddress = IPAddress.Parse("127.0.0.1");
+        var port = 8000;
 
-internal class ServerObject
-{
-    private readonly Socket _server = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        // Создаем сокет для прослушивания входящих подключений
+        var listener = new Socket(ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+        listener.Bind(new IPEndPoint(ipAddress, port));
+        listener.Listen(10);
 
-    private readonly List<Socket> _connectedClients = new();
-    private readonly Dictionary<int, List<Thread>> _receiveThreadList = new();
+        Console.WriteLine($"Сервер запущен и слушает порт {port}");
 
-    public void Start()
-    {
-        _server.Bind(new IPEndPoint(IPAddress.Parse("127.0.0.1"), 8888));
-        _server.Listen(100);
-
-        WaitClientConnection();
-    }
-
-    private void WaitClientConnection()
-    {
-        var index = 1;
         while (true)
         {
-            Console.WriteLine("The number of current links:" + _receiveThreadList.Count);
-            Console.WriteLine("Waiting for the client's link:");
-            var clientSocket = _server.Accept();
-            Console.WriteLine("{0} is successful!", clientSocket.RemoteEndPoint);
-            _connectedClients.Add(clientSocket);
+            // Принимаем входящее соединение
+            var clientSocket = await listener.AcceptAsync();
+            Console.WriteLine($"Принято входящее соединение от {clientSocket.RemoteEndPoint}");
 
-            var receive = new Thread(ReceiveMessage);
-            receive.Start(new ArrayList { index, clientSocket });
+            // Получаем сообщение от клиента
+            var buffer = new byte[1024];
+            var bytesReceived = await clientSocket.ReceiveAsync(buffer, SocketFlags.None);
+            var messageFromClient = Encoding.UTF8.GetString(buffer, 0, bytesReceived);
+            Console.WriteLine($"Получено сообщение от клиента: {messageFromClient}");
 
-            var send = new Thread(SendMessage);
-            send.Start(new ArrayList { index, clientSocket });
+            // Подключаемся к серверу-назначению
+            var destinationSocket = new Socket(ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+            await destinationSocket.ConnectAsync("127.0.0.1", 8100);
+            Console.WriteLine($"Установлено соединение с сервером-назначением {destinationSocket.RemoteEndPoint}");
 
-            _receiveThreadList.Add(index, new List<Thread> { receive, send });
-            index++;
-        }
-    }
+            // Отправляем сообщение на сервер-назначение
+            // var bytesSent = await destinationSocket.SendAsync(buffer, bytesReceived, SocketFlags.None);
+            var sent = buffer.Take(bytesReceived).ToArray();
+            var bytesSent = await destinationSocket.SendAsync(sent, SocketFlags.None);
+            Console.WriteLine($"Отправлено сообщение на сервер-назначение: {messageFromClient}");
 
-    private void ReceiveMessage(object? clientSockets)
-    {
-        var arraylist = clientSockets as ArrayList;
-        var index = (int)arraylist[0];
-        var clientSocket = arraylist[1] as Socket;
-        while (true)
-        {
-            try
-            {
-                var encodingMessage = new byte[1024];
-                var count = clientSocket.Receive(encodingMessage);
-                var message = Encoding.UTF8.GetString(encodingMessage, 0, count);
-                Console.WriteLine("{0} Send you message: {1}", clientSocket.RemoteEndPoint, message);
-            }
-            catch (Exception)
-            {
-                //Termination thread when the client is connected
-                Console.WriteLine("The code for the code: {0} has left!", index);
-                _receiveThreadList[index][0].Abort();
-            }
-        }
-    }
+            // Получаем ответ от сервера-назначения
+            var responseBuffer = new byte[1024];
+            var responseBytesReceived = await destinationSocket.ReceiveAsync(responseBuffer, SocketFlags.None);
+            var messageFromServer = Encoding.UTF8.GetString(responseBuffer, 0, responseBytesReceived);
+            Console.WriteLine($"Получен ответ от сервера-назначения: {messageFromServer}");
 
-    private void SendMessage(object? clientSockets)
-    {
-        var arraylist = clientSockets as ArrayList;
-        var index = (int)arraylist[0];
-        var clientSocket = arraylist[1] as Socket;
-        while (true)
-        {
-            try
-            {
-                Console.WriteLine("Please enter the message you want to send:");
-                var message = Console.ReadLine();
-                var encodingMessage = Encoding.UTF8.GetBytes(message);
-                clientSocket.Send(encodingMessage);
-            }
-            catch (Exception)
-            {
-                Console.WriteLine("The code for the code: {0} has left! Message failed!");
-                _receiveThreadList[index][1].Abort();
-                _receiveThreadList.Remove(index);
-            }
+            // Отправляем ответ клиенту
+            // await clientSocket.SendAsync(responseBuffer, responseBytesReceived, SocketFlags.None);
+            var send = responseBuffer.Take(responseBytesReceived).ToArray();
+            await clientSocket.SendAsync(send, SocketFlags.None);
+            Console.WriteLine($"Отправлен ответ клиенту: {messageFromServer}");
+
+            // Закрываем соединение с сервером-назначением и клиентом
+            destinationSocket.Shutdown(SocketShutdown.Both);
+            destinationSocket.Close();
+            clientSocket.Shutdown(SocketShutdown.Both);
+            clientSocket.Close();
         }
     }
 }
